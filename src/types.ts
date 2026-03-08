@@ -6,6 +6,8 @@ export type Client = {
   phone: string;
   address: string;
   notes: string;
+  username?: string;
+  password?: string;
   status: 'Ativo' | 'Inativo';
   created_at: string;
 };

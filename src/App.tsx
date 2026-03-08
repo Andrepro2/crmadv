@@ -27,7 +27,10 @@ import {
   X,
   CheckCircle2,
   AlertCircle,
-  Menu
+  Menu,
+  Key,
+  History,
+  ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -140,8 +143,16 @@ export default function App() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [userRole, setUserRole] = useState<'admin' | 'employee' | 'client'>('admin');
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [currentClientId, setCurrentClientId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+  
+  useEffect(() => {
+    if (isLoggedIn && userRole === 'client') {
+      setActiveSection('cases');
+    }
+  }, [isLoggedIn, userRole]);
   
   // Form States
   const [editingClient, setEditingClient] = useState<Partial<Client> | null>(null);
@@ -158,6 +169,8 @@ export default function App() {
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [userFilter, setUserFilter] = useState<'all' | 'admin' | 'employee' | 'client'>('all');
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -171,7 +184,7 @@ export default function App() {
       const { data: casesData } = await supabase.from('cases').select('*').order('created_at', { ascending: false });
       const { data: eventsData } = await supabase.from('events').select('*').order('date', { ascending: true });
       const { data: transactionsData } = await supabase.from('transactions').select('*').order('date', { ascending: false });
-      const { data: documentsData } = await supabase.from('documentos').select('*').order('criado_em', { ascending: false });
+      const { data: documentsData } = await supabase.from('documentos').select('*');
       const { data: usersData } = await supabase.from('users_crm').select('*').order('created_at', { ascending: false });
 
       if (clientsData) setClients(clientsData);
@@ -190,10 +203,10 @@ export default function App() {
       if (documentsData) {
         const normalizedDocuments = documentsData.map((d: any) => ({
           ...d,
-          name: d.nome || d.name || 'Sem nome',
-          url: d.URL || d.url || '',
-          created_at: d.criado_em || d.created_at || new Date().toISOString()
-        }));
+          name: d.name || d.nome || 'Sem nome',
+          url: d.url || d.URL || '',
+          created_at: d.created_at || d.criado_em || new Date().toISOString()
+        })).sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
         setDocuments(normalizedDocuments);
       }
       if (usersData) setUsers(usersData);
@@ -230,6 +243,15 @@ export default function App() {
     }
   }, [isLoggedIn]);
 
+  useEffect(() => {
+    if (userRole === 'client' && currentUser && clients.length > 0) {
+      const client = clients.find(c => c.username === currentUser.username || c.email === currentUser.email);
+      if (client) setCurrentClientId(client.id);
+    } else {
+      setCurrentClientId(null);
+    }
+  }, [userRole, currentUser, clients]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
@@ -253,6 +275,12 @@ export default function App() {
 
       if (data) {
         setUserRole(data.role);
+        setCurrentUser(data);
+        if (data.role === 'client') {
+          setActiveSection('cases');
+        } else {
+          setActiveSection('dashboard');
+        }
         setIsLoggedIn(true);
         showToast(`Bem-vindo, ${data.name}!`);
       } else {
@@ -266,6 +294,12 @@ export default function App() {
     }
   };
 
+  const sendWhatsAppMessage = (phone: string, message: string) => {
+    const cleanPhone = phone.replace(/\D/g, '');
+    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
+  };
+
   const saveClient = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.target as HTMLFormElement);
@@ -276,14 +310,49 @@ export default function App() {
       phone: formData.get('phone') as string,
       address: formData.get('address') as string,
       notes: formData.get('notes') as string,
+      username: formData.get('username') as string,
+      password: formData.get('password') as string,
       status: 'Ativo' as const,
     };
 
     try {
       if (editingClient) {
         await supabase.from('clients').update(clientData).eq('id', editingClient.id);
+        
+        // Sincronizar com users_crm se houver username
+        if (clientData.username) {
+          const { data: existingUser } = await supabase
+            .from('users_crm')
+            .select('id')
+            .eq('username', clientData.username)
+            .single();
+
+          const userData = {
+            name: clientData.name,
+            email: clientData.email,
+            username: clientData.username,
+            password: clientData.password,
+            role: 'client'
+          };
+
+          if (existingUser) {
+            await supabase.from('users_crm').update(userData).eq('id', existingUser.id);
+          } else {
+            await supabase.from('users_crm').insert([userData]);
+          }
+        }
       } else {
-        await supabase.from('clients').insert([clientData]);
+        const { data: newClient, error: clientError } = await supabase.from('clients').insert([clientData]).select().single();
+        
+        if (!clientError && clientData.username) {
+          await supabase.from('users_crm').insert([{
+            name: clientData.name,
+            email: clientData.email,
+            username: clientData.username,
+            password: clientData.password,
+            role: 'client'
+          }]);
+        }
       }
       
       showToast(editingClient ? 'Cliente atualizado com sucesso' : 'Cliente cadastrado com sucesso');
@@ -465,10 +534,11 @@ export default function App() {
         .from('documentos')
         .getPublicUrl(filePath);
 
+
       // 3. Save Metadata to Database
       const docData: any = {
         nome: file.name,
-        URL: publicUrl,
+        url: publicUrl,
         case_id: case_id || null,
         client_id: client_id || null,
       };
@@ -631,6 +701,94 @@ export default function App() {
     );
   }
 
+  const CaseMovementsModal = () => {
+    if (!selectedCaseId) return null;
+    const selectedCase = cases.find(c => c.id === selectedCaseId);
+    if (!selectedCase) return null;
+
+    const caseMovements = [
+      ...events.filter(e => e.case_id === selectedCaseId).map(e => ({
+        id: e.id,
+        date: e.date,
+        title: e.title,
+        description: e.description,
+        type: 'event',
+        icon: CalendarIcon,
+        color: 'text-primary'
+      })),
+      ...documents.filter(d => d.case_id === selectedCaseId).map(d => ({
+        id: d.id,
+        date: d.created_at,
+        title: d.name,
+        description: d.notes || 'Documento anexado ao processo',
+        type: 'document',
+        url: d.url,
+        icon: FileText,
+        color: 'text-success'
+      }))
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return (
+      <Modal
+        isOpen={!!selectedCaseId}
+        onClose={() => setSelectedCaseId(null)}
+        title={`Movimentações - Processo ${selectedCase.number}`}
+        footer={
+          <button onClick={() => setSelectedCaseId(null)} className="btn-primary">Fechar</button>
+        }
+      >
+        <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+          {caseMovements.length === 0 ? (
+            <div className="text-center py-12 text-text-muted">
+              <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
+                <History size={32} />
+              </div>
+              <p>Nenhuma movimentação registrada para este processo.</p>
+            </div>
+          ) : (
+            <div className="relative pl-8 space-y-8 before:content-[''] before:absolute before:left-[15px] before:top-2 before:bottom-2 before:w-[2px] before:bg-white/10">
+              {caseMovements.map((m) => (
+                <div key={m.id} className="relative">
+                  <div className={`absolute -left-[33px] top-0 w-8 h-8 rounded-full bg-card border-2 border-white/10 flex items-center justify-center ${m.color} z-10`}>
+                    <m.icon size={16} />
+                  </div>
+                  <div className="glass-card p-4 hover:bg-white/5 transition-colors">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-bold text-sm lg:text-base">{m.title}</h4>
+                      <span className="text-[10px] font-bold text-text-muted uppercase bg-white/5 px-2 py-1 rounded">
+                        {new Date(m.date).toLocaleDateString('pt-BR')}
+                      </span>
+                    </div>
+                    <p className="text-xs text-text-muted mb-4">{m.description}</p>
+                    {m.type === 'document' && m.url && (
+                      <div className="flex gap-2">
+                        <a 
+                          href={m.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="flex-1 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-bold transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Eye size={12} /> Visualizar PDF
+                        </a>
+                        <a 
+                          href={m.url} 
+                          download={m.title}
+                          className="flex-1 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-text text-[10px] font-bold transition-colors flex items-center justify-center gap-2"
+                        >
+                          <Download size={12} /> Baixar
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+    );
+  };
+
   return (
     <div className="min-h-screen flex">
       <div className="bg-animation" />
@@ -646,12 +804,12 @@ export default function App() {
           {[
             { id: 'dashboard', icon: LineChart, label: 'Dashboard', roles: ['admin', 'employee'] },
             { id: 'clients', icon: Users, label: 'Clientes', roles: ['admin', 'employee'] },
-            { id: 'cases', icon: Briefcase, label: 'Processos', roles: ['admin', 'employee', 'client'] },
+            { id: 'cases', icon: Briefcase, label: 'Meus Processos', roles: ['admin', 'employee', 'client'] },
             { id: 'calendar', icon: CalendarIcon, label: 'Agenda', roles: ['admin', 'employee'] },
-            { id: 'documents', icon: FileText, label: 'Documentos', roles: ['admin', 'employee', 'client'] },
+            { id: 'documents', icon: FileText, label: 'Documentos', roles: ['admin', 'employee'] },
             { id: 'finance', icon: DollarSign, label: 'Financeiro', roles: ['admin'] },
-            { id: 'users', icon: Users, label: 'Usuários', roles: ['admin'] },
-            { id: 'admin', icon: Shield, label: 'Administração', badge: 'ADM', roles: ['admin'] },
+            { id: 'users', icon: Shield, label: 'Equipe', roles: ['admin'] },
+            { id: 'admin', icon: Gavel, label: 'Administração', badge: 'ADM', roles: ['admin'] },
           ].filter(item => item.roles.includes(userRole)).map((item) => (
             <button
               key={item.id}
@@ -665,12 +823,28 @@ export default function App() {
           ))}
         </nav>
 
+        {userRole === 'client' && (
+          <div className="p-4 mt-auto">
+            <button 
+              onClick={() => sendWhatsAppMessage('5511999999999', 'Olá Dr. André, gostaria de falar sobre o andamento do meu processo.')}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-whatsapp text-white shadow-lg shadow-whatsapp/20 hover:scale-[1.02] transition-all font-bold"
+            >
+              <MessageCircle size={20} />
+              Falar com Advogado
+            </button>
+          </div>
+        )}
+
         <div className="absolute bottom-0 left-0 w-full p-6 border-t border-white/5">
           <div className="flex items-center gap-3 p-3 bg-dark/50 rounded-xl mb-4">
-            <div className="w-10 h-10 rounded-full bg-linear-to-br from-secondary to-pink-600 flex items-center justify-center font-bold">AD</div>
+            <div className="w-10 h-10 rounded-full bg-linear-to-br from-secondary to-pink-600 flex items-center justify-center font-bold">
+              {currentUser?.name?.substring(0, 2).toUpperCase() || 'AD'}
+            </div>
             <div>
-              <div className="text-sm font-bold">André Dias</div>
-              <div className="text-xs text-text-muted">Administrador</div>
+              <div className="text-sm font-bold truncate max-w-[120px]">{currentUser?.name || 'André Dias'}</div>
+              <div className="text-xs text-text-muted capitalize">
+                {userRole === 'admin' ? 'Administrador' : userRole === 'employee' ? 'Funcionário' : 'Cliente'}
+              </div>
             </div>
           </div>
           <button onClick={() => setIsLoggedIn(false)} className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-danger/10 text-danger hover:bg-danger/20 transition-all">
@@ -683,26 +857,32 @@ export default function App() {
       <main className="flex-1 p-4 lg:p-12 overflow-y-auto">
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
           <div>
-            <h1 className="text-3xl lg:text-4xl font-bold capitalize">{activeSection}</h1>
-            <p className="text-text-muted mt-1">Bem-vindo de volta, André</p>
+            <h1 className="text-3xl lg:text-4xl font-bold capitalize">
+              {userRole === 'client' && activeSection === 'cases' ? 'Meus Processos' : activeSection}
+            </h1>
+            <p className="text-text-muted mt-1">Bem-vindo de volta, {currentUser?.name || 'André'}</p>
           </div>
           <div className="flex flex-wrap items-center gap-4">
-            <span className="hidden md:flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold">
-              <Shield size={14} /> Modo Administrador
-            </span>
-            <button 
-              onClick={() => {
-                setEditingClient(null);
-                setIsClientModalOpen(true);
-              }} 
-              className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
-            >
-              <Plus size={20} /> Novo Cliente
-            </button>
+            {userRole === 'admin' && (
+              <span className="hidden md:flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold">
+                <Shield size={14} /> Modo Administrador
+              </span>
+            )}
+            {userRole !== 'client' && (
+              <button 
+                onClick={() => {
+                  setEditingClient(null);
+                  setIsClientModalOpen(true);
+                }} 
+                className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
+              >
+                <Plus size={20} /> Novo Cliente
+              </button>
+            )}
           </div>
         </header>
 
-        {activeSection === 'dashboard' && (
+        {activeSection === 'dashboard' && userRole !== 'client' && (
           <div className="space-y-12">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <StatCard title="Total de Clientes" value={clients.length} icon={Users} trend="12%" colorClass="from-primary to-indigo-600" />
@@ -825,6 +1005,15 @@ export default function App() {
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" size={18} />
                 <input type="text" placeholder="Buscar clientes..." className="input-field pl-12" />
               </div>
+              <button 
+                onClick={() => {
+                  setEditingClient(null);
+                  setIsClientModalOpen(true);
+                }}
+                className="btn-primary flex items-center gap-2"
+              >
+                <Plus size={20} /> Novo Cliente
+              </button>
             </div>
 
             <div className="glass-card overflow-x-auto">
@@ -847,7 +1036,14 @@ export default function App() {
                             {client.name.substring(0, 2).toUpperCase()}
                           </div>
                           <div className="min-w-0">
-                            <div className="font-bold truncate">{client.name}</div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-bold truncate">{client.name}</div>
+                              {client.username && (
+                                <span className="px-1.5 py-0.5 rounded bg-primary/20 text-primary text-[8px] font-bold uppercase flex items-center gap-1">
+                                  <Shield size={8} /> Acesso
+                                </span>
+                              )}
+                            </div>
                             <div className="text-xs text-text-muted truncate">{client.email}</div>
                           </div>
                         </div>
@@ -861,9 +1057,22 @@ export default function App() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
-                          <button className="p-2 hover:bg-whatsapp/20 text-whatsapp rounded-lg transition-colors">
+                          <button 
+                            onClick={() => sendWhatsAppMessage(client.phone, `Olá ${client.name}, tudo bem? Gostaria de informar sobre o andamento do seu processo.`)}
+                            className="p-2 hover:bg-whatsapp/20 text-whatsapp rounded-lg transition-colors"
+                            title="Enviar WhatsApp"
+                          >
                             <MessageCircle size={18} />
                           </button>
+                          {client.username && (
+                            <button 
+                              onClick={() => sendWhatsAppMessage(client.phone, `Olá ${client.name}, seguem seus dados de acesso ao nosso painel:\n\nLogin: ${client.username}\nSenha: ${client.password}\n\nAcesse em: ${window.location.origin}`)}
+                              className="p-2 hover:bg-primary/20 text-primary rounded-lg transition-colors"
+                              title="Enviar Credenciais"
+                            >
+                              <Key size={18} />
+                            </button>
+                          )}
                           <button 
                             onClick={() => {
                               setEditingClient(client);
@@ -896,16 +1105,38 @@ export default function App() {
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-muted" size={18} />
                 <input type="text" placeholder="Buscar processos..." className="input-field pl-12" />
               </div>
-              <button 
-                onClick={() => {
-                  setEditingCase(null);
-                  setIsCaseModalOpen(true);
-                }}
-                className="btn-primary flex items-center gap-2"
-              >
-                <Plus size={20} /> Novo Processo
-              </button>
+              {userRole !== 'client' && (
+                <button 
+                  onClick={() => {
+                    setEditingCase(null);
+                    setIsCaseModalOpen(true);
+                  }}
+                  className="btn-primary flex items-center gap-2"
+                >
+                  <Plus size={20} /> Novo Processo
+                </button>
+              )}
             </div>
+
+            {userRole === 'client' && (
+              <div className="bg-primary/10 border border-primary/20 rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/20">
+                    <MessageCircle size={24} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">Precisa de ajuda ou informações extras?</h3>
+                    <p className="text-text-muted text-sm">Estamos à disposição para tirar suas dúvidas sobre seus processos.</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => sendWhatsAppMessage('5511999999999', 'Olá Dr. André, gostaria de falar sobre o andamento do meu processo.')}
+                  className="btn-primary flex items-center gap-2 whitespace-nowrap"
+                >
+                  <MessageCircle size={20} /> Falar com Advogado Agora
+                </button>
+              </div>
+            )}
 
             <div className="glass-card overflow-x-auto">
               <table className="w-full text-left min-w-[800px]">
@@ -916,15 +1147,22 @@ export default function App() {
                     <th className="px-6 py-4">Tipo</th>
                     <th className="px-6 py-4">Prioridade</th>
                     <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4">Ações</th>
+                    {userRole !== 'client' && <th className="px-6 py-4">Ações</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {cases.map((c) => {
+                  {cases.filter(c => userRole !== 'client' || c.client_id === currentClientId).map((c) => {
                     const client = clients.find(cl => cl.id === c.client_id);
                     return (
                       <tr key={c.id} className="hover:bg-white/5 transition-colors">
-                        <td className="px-6 py-4 font-bold text-sm whitespace-nowrap">{c.number}</td>
+                        <td className="px-6 py-4 font-bold text-sm whitespace-nowrap">
+                          <button 
+                            onClick={() => setSelectedCaseId(c.id)}
+                            className="text-primary hover:underline flex items-center gap-2"
+                          >
+                            <FileText size={14} /> {c.number}
+                          </button>
+                        </td>
                         <td className="px-6 py-4 text-sm whitespace-nowrap">{client?.name || 'N/A'}</td>
                         <td className="px-6 py-4 text-sm whitespace-nowrap">{c.type}</td>
                         <td className="px-6 py-4">
@@ -943,28 +1181,41 @@ export default function App() {
                             {c.status}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex gap-2">
-                            <button className="p-2 hover:bg-whatsapp/20 text-whatsapp rounded-lg transition-colors">
-                              <MessageCircle size={18} />
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setEditingCase(c);
-                                setIsCaseModalOpen(true);
-                              }}
-                              className="p-2 hover:bg-white/10 rounded-lg transition-colors"
-                            >
-                              <Edit size={18} />
-                            </button>
-                            <button 
-                              onClick={() => deleteCase(c.id)}
-                              className="p-2 hover:bg-danger/20 text-danger rounded-lg transition-colors"
-                            >
-                              <Trash2 size={18} />
-                            </button>
-                          </div>
-                        </td>
+                        {userRole !== 'client' && (
+                          <td className="px-6 py-4">
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => {
+                                  const client = clients.find(cl => cl.id === c.client_id);
+                                  if (client) {
+                                    sendWhatsAppMessage(client.phone, `Olá ${client.name}, informamos que o processo ${c.number} (${c.type}) está com status: ${c.status}.\n\nAcompanhe os detalhes em nosso sistema: ${window.location.origin}`);
+                                  } else {
+                                    showToast('Cliente não encontrado para este processo', 'error');
+                                  }
+                                }}
+                                className="p-2 hover:bg-whatsapp/20 text-whatsapp rounded-lg transition-colors"
+                                title="Enviar Andamento"
+                              >
+                                <MessageCircle size={18} />
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setEditingCase(c);
+                                  setIsCaseModalOpen(true);
+                                }}
+                                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                              >
+                                <Edit size={18} />
+                              </button>
+                              <button 
+                                onClick={() => deleteCase(c.id)}
+                                className="p-2 hover:bg-danger/20 text-danger rounded-lg transition-colors"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -1096,8 +1347,8 @@ export default function App() {
 
         {activeSection === 'users' && userRole === 'admin' && (
           <div className="space-y-8">
-            <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold">Gestão de Usuários</h2>
+            <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
+              <h2 className="text-2xl font-bold">Gestão da Equipe</h2>
               <button 
                 onClick={() => {
                   setEditingUser(null);
@@ -1105,21 +1356,39 @@ export default function App() {
                 }}
                 className="btn-primary flex items-center gap-2"
               >
-                <Plus size={20} /> Novo Usuário
+                <Plus size={20} /> Novo Colaborador
               </button>
             </div>
+
+            <div className="flex gap-2 p-1 bg-white/5 rounded-xl w-fit">
+              {(['all', 'admin', 'employee'] as const).map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => setUserFilter(filter)}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                    userFilter === filter 
+                      ? 'bg-primary text-white shadow-lg' 
+                      : 'text-text-muted hover:text-text hover:bg-white/5'
+                  }`}
+                >
+                  {filter === 'all' ? 'Todos' : 
+                   filter === 'admin' ? 'Administradores' : 'Funcionários'}
+                </button>
+              ))}
+            </div>
+
             <div className="glass-card overflow-x-auto">
               <table className="w-full text-left min-w-[800px]">
                 <thead>
                   <tr className="bg-white/5 text-text-muted text-xs uppercase tracking-wider">
-                    <th className="px-6 py-4">Usuário</th>
+                    <th className="px-6 py-4">Colaborador</th>
                     <th className="px-6 py-4">Username</th>
                     <th className="px-6 py-4">Nível de Acesso</th>
                     <th className="px-6 py-4">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {users.map((u) => (
+                  {users.filter(u => u.role !== 'client' && (userFilter === 'all' || u.role === userFilter)).map((u) => (
                     <tr key={u.id} className="hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
                         <div className="font-bold">{u.name}</div>
@@ -1128,10 +1397,9 @@ export default function App() {
                       <td className="px-6 py-4 text-sm">{u.username}</td>
                       <td className="px-6 py-4">
                         <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
-                          u.role === 'admin' ? 'bg-primary/20 text-primary' : 
-                          u.role === 'employee' ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'
+                          u.role === 'admin' ? 'bg-primary/20 text-primary' : 'bg-success/20 text-success'
                         }`}>
-                          {u.role === 'admin' ? 'Administrador' : u.role === 'employee' ? 'Funcionário' : 'Cliente'}
+                          {u.role === 'admin' ? 'Administrador' : 'Funcionário'}
                         </span>
                       </td>
                       <td className="px-6 py-4">
@@ -1246,6 +1514,14 @@ export default function App() {
           <div className="md:col-span-2 space-y-2">
             <label className="text-xs text-text-muted">Endereço</label>
             <input name="address" type="text" className="input-field" placeholder="Rua, número, bairro..." defaultValue={editingClient?.address} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">Login do Cliente (Acesso ao Painel)</label>
+            <input name="username" type="text" className="input-field" placeholder="usuario.cliente" defaultValue={editingClient?.username} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">Senha do Cliente</label>
+            <input name="password" type="password" className="input-field" placeholder="********" defaultValue={editingClient?.password} />
           </div>
           <div className="md:col-span-2 space-y-2">
             <label className="text-xs text-text-muted">Observações</label>
@@ -1432,11 +1708,11 @@ export default function App() {
       <Modal 
         isOpen={isUserModalOpen} 
         onClose={() => setIsUserModalOpen(false)} 
-        title={editingUser ? "Editar Usuário" : "Novo Usuário"}
+        title={editingUser ? "Editar Colaborador" : "Novo Colaborador"}
         footer={
           <>
             <button onClick={() => setIsUserModalOpen(false)} className="px-6 py-2 rounded-xl border border-white/10 hover:bg-white/5">Cancelar</button>
-            <button form="userForm" type="submit" className="btn-primary">Salvar Usuário</button>
+            <button form="userForm" type="submit" className="btn-primary">Salvar Colaborador</button>
           </>
         }
       >
@@ -1458,7 +1734,6 @@ export default function App() {
             <select name="role" required className="input-field" defaultValue={editingUser?.role || 'employee'}>
               <option value="admin">Administrador Geral</option>
               <option value="employee">Funcionário do Escritório</option>
-              <option value="client">Cliente (Acompanhamento)</option>
             </select>
           </div>
           <div className="space-y-2">
@@ -1508,6 +1783,8 @@ export default function App() {
           </div>
         </form>
       </Modal>
+
+      <CaseMovementsModal />
 
       {/* Mobile Toggle */}
       <button 
