@@ -48,6 +48,15 @@ export type Transaction = {
   created_at: string;
 };
 
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  username: string;
+  role: 'admin' | 'employee' | 'client';
+  created_at: string;
+};
+
 export type Document = {
   id: string;
   name: string;

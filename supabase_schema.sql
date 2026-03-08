@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS documents (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 6. Tabela de Usuários do Sistema
+CREATE TABLE IF NOT EXISTS users_crm (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL UNIQUE,
+  password TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'client')),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Habilitar Realtime para atualizações automáticas
 -- Nota: Algumas versões do Supabase requerem que você habilite isso via UI em 'Database' -> 'Replication'
 -- alter publication supabase_realtime add table clients;

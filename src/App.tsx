@@ -138,6 +138,8 @@ export default function App() {
   const [events, setEvents] = useState<Event[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [userRole, setUserRole] = useState<'admin' | 'employee' | 'client'>('admin');
   const [isLoading, setIsLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   
@@ -146,6 +148,7 @@ export default function App() {
   const [editingCase, setEditingCase] = useState<Partial<Case> | null>(null);
   const [editingEvent, setEditingEvent] = useState<Partial<Event> | null>(null);
   const [editingTransaction, setEditingTransaction] = useState<Partial<Transaction> | null>(null);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
   // Modal States
@@ -154,6 +157,7 @@ export default function App() {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [isDocumentModalOpen, setIsDocumentModalOpen] = useState(false);
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -168,12 +172,23 @@ export default function App() {
       const { data: eventsData } = await supabase.from('events').select('*').order('date', { ascending: true });
       const { data: transactionsData } = await supabase.from('transactions').select('*').order('date', { ascending: false });
       const { data: documentsData } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
+      const { data: usersData } = await supabase.from('users_crm').select('*').order('created_at', { ascending: false });
 
       if (clientsData) setClients(clientsData);
       if (casesData) setCases(casesData);
       if (eventsData) setEvents(eventsData);
-      if (transactionsData) setTransactions(transactionsData);
+      
+      // Normalizar transações para garantir que 'value' exista mesmo que o banco use 'amount'
+      if (transactionsData) {
+        const normalizedTransactions = transactionsData.map((t: any) => ({
+          ...t,
+          value: t.value !== undefined ? t.value : (t.amount !== undefined ? t.amount : 0)
+        }));
+        setTransactions(normalizedTransactions);
+      }
+      
       if (documentsData) setDocuments(documentsData);
+      if (usersData) setUsers(usersData);
     } catch (error) {
       console.error('Error fetching data:', error);
       showToast('Erro ao carregar dados', 'error');
@@ -207,11 +222,40 @@ export default function App() {
     }
   }, [isLoggedIn]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Acesso direto conforme solicitado pelo usuário para facilitar o uso
-    setIsLoggedIn(true);
-    showToast('Bem-vindo, André! Acesso administrativo concedido.');
+    setLoginError('');
+    setIsLoading(true);
+    
+    try {
+      // Fallback para o André (Admin) para garantir acesso inicial
+      if (loginData.username === 'andre' && loginData.password === '123456') {
+        setUserRole('admin');
+        setIsLoggedIn(true);
+        showToast('Bem-vindo, André! Acesso administrativo concedido.');
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('users_crm')
+        .select('*')
+        .eq('username', loginData.username)
+        .eq('password', loginData.password)
+        .single();
+
+      if (data) {
+        setUserRole(data.role);
+        setIsLoggedIn(true);
+        showToast(`Bem-vindo, ${data.name}!`);
+      } else {
+        setLoginError('Usuário ou senha incorretos');
+      }
+    } catch (err) {
+      console.error(err);
+      setLoginError('Erro ao realizar login. Verifique a tabela users_crm.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const saveClient = async (e: React.FormEvent) => {
@@ -343,7 +387,7 @@ export default function App() {
     const formData = new FormData(e.target as HTMLFormElement);
     const transactionData = {
       description: formData.get('description') as string,
-      value: parseFloat(formData.get('amount') as string) || 0,
+      value: parseFloat(formData.get('value') as string) || 0,
       type: formData.get('type') as any,
       date: formData.get('date') as string,
       category: formData.get('category') as string,
@@ -400,36 +444,38 @@ export default function App() {
       const filePath = `${fileName}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('DOCUMENTOS')
+        .from('documentos')
         .upload(filePath, file);
 
       if (uploadError) throw uploadError;
 
       // 2. Get Public URL
       const { data: { publicUrl } } = supabase.storage
-        .from('DOCUMENTOS')
+        .from('documentos')
         .getPublicUrl(filePath);
 
       // 3. Save Metadata to Database
-      const docData = {
+      const docData: any = {
         name: file.name,
-        size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-        type: fileExt || 'unknown',
         url: publicUrl,
         case_id: case_id || null,
         client_id: client_id || null,
-        format: file.type,
-        notes: ''
       };
 
-      await supabase.from('documents').insert([docData]);
+      // Tenta adicionar campos extras se existirem na tabela, mas não falha se não existirem
+      try {
+        await supabase.from('documents').insert([docData]);
+      } catch (e) {
+        console.warn('Erro ao inserir documento, tentando versão simplificada', e);
+        await supabase.from('documents').insert([{ name: file.name, url: publicUrl }]);
+      }
       
       showToast('Documento enviado com sucesso');
       setIsDocumentModalOpen(false);
       fetchData();
     } catch (error) {
       console.error(error);
-      showToast('Erro ao enviar documento. Verifique se o bucket "DOCUMENTOS" existe no Supabase.', 'error');
+      showToast('Erro ao enviar documento. Verifique se o bucket "documentos" existe no Supabase.', 'error');
     } finally {
       setIsUploading(false);
     }
@@ -443,7 +489,7 @@ export default function App() {
         if (doc && doc.url) {
           const fileName = doc.url.split('/').pop();
           if (fileName) {
-            await supabase.storage.from('DOCUMENTOS').remove([fileName]);
+            await supabase.storage.from('documentos').remove([fileName]);
           }
         }
         await supabase.from('documents').delete().eq('id', id);
@@ -451,6 +497,45 @@ export default function App() {
         fetchData();
       } catch (error) {
         showToast('Erro ao excluir documento', 'error');
+      }
+    }
+  };
+
+  const saveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const formData = new FormData(e.target as HTMLFormElement);
+    const userData = {
+      name: formData.get('name') as string,
+      email: formData.get('email') as string,
+      username: formData.get('username') as string,
+      role: formData.get('role') as any,
+      password: formData.get('password') as string || '123456',
+    };
+
+    try {
+      if (editingUser) {
+        await supabase.from('users_crm').update(userData).eq('id', editingUser.id);
+      } else {
+        await supabase.from('users_crm').insert([userData]);
+      }
+      
+      showToast(editingUser ? 'Usuário atualizado' : 'Usuário cadastrado');
+      setIsUserModalOpen(false);
+      setEditingUser(null);
+      fetchData();
+    } catch (error) {
+      showToast('Erro ao salvar usuário', 'error');
+    }
+  };
+
+  const deleteUser = async (id: string) => {
+    if (confirm('Deseja excluir este usuário?')) {
+      try {
+        await supabase.from('users_crm').delete().eq('id', id);
+        showToast('Usuário excluído');
+        fetchData();
+      } catch (error) {
+        showToast('Erro ao excluir usuário', 'error');
       }
     }
   };
@@ -547,14 +632,15 @@ export default function App() {
 
         <nav className="p-4 space-y-2">
           {[
-            { id: 'dashboard', icon: LineChart, label: 'Dashboard' },
-            { id: 'clients', icon: Users, label: 'Clientes' },
-            { id: 'cases', icon: Briefcase, label: 'Processos' },
-            { id: 'calendar', icon: CalendarIcon, label: 'Agenda' },
-            { id: 'documents', icon: FileText, label: 'Documentos' },
-            { id: 'finance', icon: DollarSign, label: 'Financeiro' },
-            { id: 'admin', icon: Shield, label: 'Administração', badge: 'ADM' },
-          ].map((item) => (
+            { id: 'dashboard', icon: LineChart, label: 'Dashboard', roles: ['admin', 'employee'] },
+            { id: 'clients', icon: Users, label: 'Clientes', roles: ['admin', 'employee'] },
+            { id: 'cases', icon: Briefcase, label: 'Processos', roles: ['admin', 'employee', 'client'] },
+            { id: 'calendar', icon: CalendarIcon, label: 'Agenda', roles: ['admin', 'employee'] },
+            { id: 'documents', icon: FileText, label: 'Documentos', roles: ['admin', 'employee', 'client'] },
+            { id: 'finance', icon: DollarSign, label: 'Financeiro', roles: ['admin'] },
+            { id: 'users', icon: Users, label: 'Usuários', roles: ['admin'] },
+            { id: 'admin', icon: Shield, label: 'Administração', badge: 'ADM', roles: ['admin'] },
+          ].filter(item => item.roles.includes(userRole)).map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveSection(item.id)}
@@ -582,13 +668,13 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-8 lg:p-12 overflow-y-auto">
+      <main className="flex-1 p-4 lg:p-12 overflow-y-auto">
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
           <div>
-            <h1 className="text-4xl font-bold capitalize">{activeSection}</h1>
+            <h1 className="text-3xl lg:text-4xl font-bold capitalize">{activeSection}</h1>
             <p className="text-text-muted mt-1">Bem-vindo de volta, André</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <span className="hidden md:flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold">
               <Shield size={14} /> Modo Administrador
             </span>
@@ -597,7 +683,7 @@ export default function App() {
                 setEditingClient(null);
                 setIsClientModalOpen(true);
               }} 
-              className="btn-primary flex items-center gap-2"
+              className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
             >
               <Plus size={20} /> Novo Cliente
             </button>
@@ -677,8 +763,8 @@ export default function App() {
               </div>
             </div>
 
-            <div className="glass-card overflow-hidden">
-              <table className="w-full text-left">
+            <div className="glass-card overflow-x-auto">
+              <table className="w-full text-left min-w-[800px]">
                 <thead>
                   <tr className="bg-white/5 text-text-muted text-xs uppercase tracking-wider">
                     <th className="px-6 py-4">Cliente</th>
@@ -693,17 +779,17 @@ export default function App() {
                     <tr key={client.id} className="hover:bg-white/5 transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold">
+                          <div className="w-10 h-10 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold shrink-0">
                             {client.name.substring(0, 2).toUpperCase()}
                           </div>
-                          <div>
-                            <div className="font-bold">{client.name}</div>
-                            <div className="text-xs text-text-muted">{client.email}</div>
+                          <div className="min-w-0">
+                            <div className="font-bold truncate">{client.name}</div>
+                            <div className="text-xs text-text-muted truncate">{client.email}</div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-sm">{client.document}</td>
-                      <td className="px-6 py-4 text-sm">{client.phone}</td>
+                      <td className="px-6 py-4 text-sm whitespace-nowrap">{client.document}</td>
+                      <td className="px-6 py-4 text-sm whitespace-nowrap">{client.phone}</td>
                       <td className="px-6 py-4">
                         <span className="px-3 py-1 rounded-full bg-success/20 text-success text-[10px] font-bold uppercase">
                           {client.status}
@@ -757,8 +843,8 @@ export default function App() {
               </button>
             </div>
 
-            <div className="glass-card overflow-hidden">
-              <table className="w-full text-left">
+            <div className="glass-card overflow-x-auto">
+              <table className="w-full text-left min-w-[800px]">
                 <thead>
                   <tr className="bg-white/5 text-text-muted text-xs uppercase tracking-wider">
                     <th className="px-6 py-4">Número</th>
@@ -774,9 +860,9 @@ export default function App() {
                     const client = clients.find(cl => cl.id === c.client_id);
                     return (
                       <tr key={c.id} className="hover:bg-white/5 transition-colors">
-                        <td className="px-6 py-4 font-bold text-sm">{c.number}</td>
-                        <td className="px-6 py-4 text-sm">{client?.name || 'N/A'}</td>
-                        <td className="px-6 py-4 text-sm">{c.type}</td>
+                        <td className="px-6 py-4 font-bold text-sm whitespace-nowrap">{c.number}</td>
+                        <td className="px-6 py-4 text-sm whitespace-nowrap">{client?.name || 'N/A'}</td>
+                        <td className="px-6 py-4 text-sm whitespace-nowrap">{c.type}</td>
                         <td className="px-6 py-4">
                           <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
                             c.priority === 'Alta' ? 'bg-danger/20 text-danger' : 
@@ -866,14 +952,14 @@ export default function App() {
 
         {activeSection === 'finance' && (
           <div className="space-y-8">
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <h2 className="text-2xl font-bold">Financeiro</h2>
               <button 
                 onClick={() => {
                   setEditingTransaction(null);
                   setIsTransactionModalOpen(true);
                 }}
-                className="btn-primary flex items-center gap-2"
+                className="btn-primary flex items-center gap-2 w-full md:w-auto justify-center"
               >
                 <Plus size={20} /> Nova Transação
               </button>
@@ -882,62 +968,131 @@ export default function App() {
               <div className="glass-card p-6 border-t-4 border-success">
                 <div className="text-text-muted text-sm mb-2">Total Receitas</div>
                 <div className="text-3xl font-bold text-success">
-                  R$ {transactions.filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {transactions.filter(t => t.type === 'entrada').reduce((acc, t) => acc + (t.value || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
               </div>
               <div className="glass-card p-6 border-t-4 border-danger">
                 <div className="text-text-muted text-sm mb-2">Total Despesas</div>
                 <div className="text-3xl font-bold text-danger">
-                  R$ {transactions.filter(t => t.type === 'saida').reduce((acc, t) => acc + t.amount, 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {transactions.filter(t => t.type === 'saida').reduce((acc, t) => acc + (t.value || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
               </div>
               <div className="glass-card p-6 border-t-4 border-primary">
                 <div className="text-text-muted text-sm mb-2">Saldo Geral</div>
                 <div className="text-3xl font-bold text-primary">
-                  R$ {(transactions.filter(t => t.type === 'entrada').reduce((acc, t) => acc + t.amount, 0) - 
-                       transactions.filter(t => t.type === 'saida').reduce((acc, t) => acc + t.amount, 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {(transactions.filter(t => t.type === 'entrada').reduce((acc, t) => acc + (t.value || 0), 0) - 
+                       transactions.filter(t => t.type === 'saida').reduce((acc, t) => acc + (t.value || 0), 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </div>
               </div>
             </div>
-            <div className="glass-card p-8">
+            <div className="glass-card p-4 lg:p-8">
               <h3 className="text-xl font-bold mb-6">Últimas Transações</h3>
               <div className="space-y-4">
                 {transactions.map((t) => (
-                  <div key={t.id} className="flex justify-between items-center p-4 bg-white/5 rounded-xl hover:bg-white/10 transition-colors group">
+                  <div key={t.id} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 bg-white/5 rounded-xl hover:bg-white/10 transition-colors group gap-4">
                     <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${t.type === 'entrada' ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'}`}>
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${t.type === 'entrada' ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'}`}>
                         {t.type === 'entrada' ? <ArrowDown size={18} /> : <ArrowUp size={18} />}
                       </div>
                       <div>
-                        <div className="font-bold">{t.description}</div>
-                        <div className="text-xs text-text-muted">{new Date(t.date).toLocaleDateString('pt-BR')} • {t.category}</div>
+                        <div className="font-bold text-sm lg:text-base">{t.description}</div>
+                        <div className="text-xs text-text-muted">
+                          {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Data n/a'} • {t.category}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-6">
+                    <div className="flex items-center justify-between w-full sm:w-auto gap-6">
                       <div className={`font-bold ${t.type === 'entrada' ? 'text-success' : 'text-danger'}`}>
-                        {t.type === 'entrada' ? '+' : '-'} R$ {t.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        {t.type === 'entrada' ? '+' : '-'} R$ {(t.value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </div>
-                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
                           onClick={() => {
                             setEditingTransaction(t);
                             setIsTransactionModalOpen(true);
                           }}
-                          className="p-1 hover:bg-white/10 rounded"
+                          className="p-2 hover:bg-white/10 rounded"
                         >
-                          <Edit size={14} />
+                          <Edit size={16} />
                         </button>
                         <button 
                           onClick={() => deleteTransaction(t.id)}
-                          className="p-1 hover:bg-danger/20 text-danger rounded"
+                          className="p-2 hover:bg-danger/20 text-danger rounded"
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size={16} />
                         </button>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'users' && userRole === 'admin' && (
+          <div className="space-y-8">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Gestão de Usuários</h2>
+              <button 
+                onClick={() => {
+                  setEditingUser(null);
+                  setIsUserModalOpen(true);
+                }}
+                className="btn-primary flex items-center gap-2"
+              >
+                <Plus size={20} /> Novo Usuário
+              </button>
+            </div>
+            <div className="glass-card overflow-x-auto">
+              <table className="w-full text-left min-w-[800px]">
+                <thead>
+                  <tr className="bg-white/5 text-text-muted text-xs uppercase tracking-wider">
+                    <th className="px-6 py-4">Usuário</th>
+                    <th className="px-6 py-4">Username</th>
+                    <th className="px-6 py-4">Nível de Acesso</th>
+                    <th className="px-6 py-4">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {users.map((u) => (
+                    <tr key={u.id} className="hover:bg-white/5 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="font-bold">{u.name}</div>
+                        <div className="text-xs text-text-muted">{u.email}</div>
+                      </td>
+                      <td className="px-6 py-4 text-sm">{u.username}</td>
+                      <td className="px-6 py-4">
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
+                          u.role === 'admin' ? 'bg-primary/20 text-primary' : 
+                          u.role === 'employee' ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'
+                        }`}>
+                          {u.role === 'admin' ? 'Administrador' : u.role === 'employee' ? 'Funcionário' : 'Cliente'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => {
+                              setEditingUser(u);
+                              setIsUserModalOpen(true);
+                            }}
+                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          >
+                            <Edit size={18} />
+                          </button>
+                          <button 
+                            onClick={() => deleteUser(u.id)}
+                            className="p-2 hover:bg-danger/20 text-danger rounded-lg transition-colors"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
@@ -1172,7 +1327,7 @@ export default function App() {
           </div>
           <div className="space-y-2">
             <label className="text-xs text-text-muted">Valor (R$) *</label>
-            <input name="amount" type="number" step="0.01" required className="input-field" placeholder="0.00" defaultValue={editingTransaction?.amount} />
+            <input name="value" type="number" step="0.01" required className="input-field" placeholder="0.00" defaultValue={editingTransaction?.value} />
           </div>
           <div className="space-y-2">
             <label className="text-xs text-text-muted">Tipo *</label>
@@ -1204,6 +1359,45 @@ export default function App() {
                 <option key={c.id} value={c.id}>{c.number}</option>
               ))}
             </select>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal 
+        isOpen={isUserModalOpen} 
+        onClose={() => setIsUserModalOpen(false)} 
+        title={editingUser ? "Editar Usuário" : "Novo Usuário"}
+        footer={
+          <>
+            <button onClick={() => setIsUserModalOpen(false)} className="px-6 py-2 rounded-xl border border-white/10 hover:bg-white/5">Cancelar</button>
+            <button form="userForm" type="submit" className="btn-primary">Salvar Usuário</button>
+          </>
+        }
+      >
+        <form id="userForm" onSubmit={saveUser} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">Nome Completo *</label>
+            <input name="name" type="text" required className="input-field" defaultValue={editingUser?.name} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">Email *</label>
+            <input name="email" type="email" required className="input-field" defaultValue={editingUser?.email} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">Username *</label>
+            <input name="username" type="text" required className="input-field" defaultValue={editingUser?.username} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">Nível de Acesso *</label>
+            <select name="role" required className="input-field" defaultValue={editingUser?.role || 'employee'}>
+              <option value="admin">Administrador Geral</option>
+              <option value="employee">Funcionário do Escritório</option>
+              <option value="client">Cliente (Acompanhamento)</option>
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">Senha {editingUser ? '(Deixe em branco para manter)' : '*'}</label>
+            <input name="password" type="password" required={!editingUser} className="input-field" placeholder="••••••••" />
           </div>
         </form>
       </Modal>

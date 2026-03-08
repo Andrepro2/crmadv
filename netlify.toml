@@ -1,7 +1,10 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  environment = { NETLIFY_NEXTJS_SKIP_AUTO_INSTALL = "true", NODE_VERSION = "20" }
 
-[build.environment]
-  NETLIFY_NEXTJS_SKIP_AUTO_INSTALL = "true"
-  NODE_VERSION = "20"
+[build.processing]
+  skip_processing = true
+
+[context.production]
+  environment = { NETLIFY_NEXTJS_SKIP_AUTO_INSTALL = "true" }
