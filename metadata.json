@@ -1,5 +1,5 @@
 {
-  "name": "LexPro CRM Jurídico",
-  "description": "Sistema de Gestão Jurídica (CRM) para advogados com integração WhatsApp, Financeiro e Gestão de Processos.",
+  "name": "LexPro - CRM Jurídico",
+  "description": "CRM completo para escritórios de advocacia com gestão de clientes, processos, agenda e financeiro.",
   "requestFramePermissions": []
 }

@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #6366f1;
+  --color-primary-dark: #4f46e5;
+  --color-secondary: #ec4899;
+  --color-accent: #06b6d4;
+  --color-whatsapp: #25d366;
+  --color-dark: #0f172a;
+  --color-darker: #020617;
+  --color-card: #1e293b;
+  --color-card-hover: #334155;
+  --color-text: #f8fafc;
+  --color-text-muted: #94a3b8;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+}
+
+@layer base {
+  body {
+    @apply bg-darker text-text font-sans min-h-screen overflow-x-hidden;
+  }
+}
+
+@layer components {
+  .bg-animation {
+    @apply fixed inset-0 -z-10 overflow-hidden;
+    background: radial-gradient(circle at 20% 80%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(236, 72, 153, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 40% 40%, rgba(6, 182, 212, 0.1) 0%, transparent 50%);
+    animation: float 20s infinite ease-in-out;
+  }
+
+  .glass-card {
+    @apply bg-card/80 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl;
+  }
+
+  .btn-primary {
+    @apply bg-linear-to-br from-primary to-indigo-700 text-white px-6 py-3 rounded-xl font-semibold transition-all hover:scale-[1.02] hover:shadow-[0_10px_30px_rgba(99,102,241,0.4)] active:scale-95;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 bg-dark/60 border-2 border-primary/20 rounded-xl text-text focus:outline-hidden focus:border-primary focus:shadow-[0_0_20px_rgba(99,102,241,0.2)] transition-all;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  33% { transform: translate(30px, -30px) rotate(120deg); }
+  66% { transform: translate(-20px, 20px) rotate(240deg); }
+}
+
+/* FullCalendar Customization */
+.fc {
+  @apply text-text;
+}
+.fc-toolbar-title {
+  font-size: 1.25rem !important;
+  font-weight: 700 !important;
+}
+.fc-button {
+  @apply bg-primary/20 border-primary/30 text-text rounded-lg px-4 py-2 hover:bg-primary/40;
+  border-width: 1px !important;
+}
+.fc-button-active {
+  background-color: var(--color-primary) !important;
+}
+.fc-daygrid-day {
+  @apply bg-dark/30;
+}
+.fc-day-today {
+  background-color: rgba(99, 102, 241, 0.2) !important;
+}
