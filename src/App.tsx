@@ -171,7 +171,7 @@ export default function App() {
       const { data: casesData } = await supabase.from('cases').select('*').order('created_at', { ascending: false });
       const { data: eventsData } = await supabase.from('events').select('*').order('date', { ascending: true });
       const { data: transactionsData } = await supabase.from('transactions').select('*').order('date', { ascending: false });
-      const { data: documentsData } = await supabase.from('documents').select('*').order('created_at', { ascending: false });
+      const { data: documentsData } = await supabase.from('documentos').select('*').order('criado_em', { ascending: false });
       const { data: usersData } = await supabase.from('users_crm').select('*').order('created_at', { ascending: false });
 
       if (clientsData) setClients(clientsData);
@@ -187,7 +187,15 @@ export default function App() {
         setTransactions(normalizedTransactions);
       }
       
-      if (documentsData) setDocuments(documentsData);
+      if (documentsData) {
+        const normalizedDocuments = documentsData.map((d: any) => ({
+          ...d,
+          name: d.nome || d.name || 'Sem nome',
+          url: d.URL || d.url || '',
+          created_at: d.criado_em || d.created_at || new Date().toISOString()
+        }));
+        setDocuments(normalizedDocuments);
+      }
       if (usersData) setUsers(usersData);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -440,14 +448,17 @@ export default function App() {
     try {
       // 1. Upload to Supabase Storage
       const fileExt = file.name.split('.').pop();
-      const fileName = `${Math.random()}.${fileExt}`;
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
       const filePath = `${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('documentos')
         .upload(filePath, file);
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error('Erro no Storage:', uploadError);
+        throw new Error(`Erro no Armazenamento (Storage): ${uploadError.message}. Verifique se o bucket "documentos" existe e é público.`);
+      }
 
       // 2. Get Public URL
       const { data: { publicUrl } } = supabase.storage
@@ -456,26 +467,27 @@ export default function App() {
 
       // 3. Save Metadata to Database
       const docData: any = {
-        name: file.name,
-        url: publicUrl,
+        nome: file.name,
+        URL: publicUrl,
         case_id: case_id || null,
         client_id: client_id || null,
       };
 
-      // Tenta adicionar campos extras se existirem na tabela, mas não falha se não existirem
-      try {
-        await supabase.from('documents').insert([docData]);
-      } catch (e) {
-        console.warn('Erro ao inserir documento, tentando versão simplificada', e);
-        await supabase.from('documents').insert([{ name: file.name, url: publicUrl }]);
+      // Tenta inserir na tabela 'documentos'
+      const { error: insertError } = await supabase.from('documentos').insert([docData]);
+      
+      if (insertError) {
+        console.error('Erro no Banco de Dados:', insertError);
+        throw new Error(`Erro no Banco de Dados: ${insertError.message}. Verifique se a tabela "documentos" existe.`);
       }
       
       showToast('Documento enviado com sucesso');
       setIsDocumentModalOpen(false);
       fetchData();
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      showToast('Erro ao enviar documento. Verifique se o bucket "documentos" existe no Supabase.', 'error');
+      const message = error.message || 'Erro desconhecido';
+      showToast(`Erro ao enviar: ${message}. Verifique se a tabela "documentos" e o bucket "documentos" existem no Supabase.`, 'error');
     } finally {
       setIsUploading(false);
     }
@@ -492,7 +504,7 @@ export default function App() {
             await supabase.storage.from('documentos').remove([fileName]);
           }
         }
-        await supabase.from('documents').delete().eq('id', id);
+        await supabase.from('documentos').delete().eq('id', id);
         showToast('Documento excluído');
         fetchData();
       } catch (error) {
@@ -748,6 +760,58 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 glass-card p-8">
+                <h3 className="text-xl font-bold mb-6">Processos Recentes</h3>
+                <div className="space-y-4">
+                  {cases.slice(0, 5).map((c) => (
+                    <div key={c.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl hover:bg-white/10 transition-colors group">
+                      <div className="flex items-center gap-4">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${c.priority === 'Alta' ? 'bg-danger/20 text-danger' : 'bg-primary/20 text-primary'}`}>
+                          <Briefcase size={20} />
+                        </div>
+                        <div>
+                          <div className="font-bold text-sm lg:text-base">{c.number}</div>
+                          <div className="text-xs text-text-muted">{c.type}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-bold text-sm">R$ {c.value.toLocaleString('pt-BR')}</div>
+                        <div className="text-[10px] uppercase text-text-muted">{c.status}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {cases.length === 0 && <div className="text-center py-4 text-text-muted">Nenhum processo cadastrado.</div>}
+                </div>
+              </div>
+
+              <div className="glass-card p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-bold">Documentos Recentes</h3>
+                  <button onClick={() => setActiveSection('documents')} className="text-xs text-primary hover:underline">Ver todos</button>
+                </div>
+                <div className="space-y-4">
+                  {documents.slice(0, 5).map((doc) => (
+                    <div key={doc.id} className="flex items-center gap-3 p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-colors group">
+                      <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                        <FileText size={16} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-xs truncate" title={doc.name}>{doc.name}</div>
+                        <div className="text-[10px] text-text-muted">
+                          {doc.created_at ? new Date(doc.created_at).toLocaleDateString('pt-BR') : 'Data n/a'}
+                        </div>
+                      </div>
+                      <a href={doc.url} target="_blank" rel="noopener noreferrer" className="p-1.5 hover:bg-primary/20 text-primary rounded-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Eye size={14} />
+                      </a>
+                    </div>
+                  ))}
+                  {documents.length === 0 && <div className="text-center py-4 text-text-muted text-xs">Nenhum documento enviado.</div>}
                 </div>
               </div>
             </div>
@@ -1122,7 +1186,9 @@ export default function App() {
                   </div>
                   <div>
                     <div className="font-bold truncate pr-8" title={doc.name}>{doc.name}</div>
-                    <div className="text-xs text-text-muted">{doc.size} • {new Date(doc.created_at).toLocaleDateString('pt-BR')}</div>
+                    <div className="text-xs text-text-muted">
+                      {doc.created_at ? new Date(doc.created_at).toLocaleDateString('pt-BR') : 'Data n/a'}
+                    </div>
                   </div>
                   <div className="flex gap-2 mt-auto">
                     <a 
