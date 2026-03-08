@@ -2,7 +2,5 @@
   command = "npm run build"
   publish = "dist"
 
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
-  [plugins.inputs]
-    disable = true
+[build.environment]
+  NETLIFY_NEXTJS_SKIP_AUTO_INSTALL = "true"
