@@ -4,3 +4,4 @@
 
 [build.environment]
   NETLIFY_NEXTJS_SKIP_AUTO_INSTALL = "true"
+  NODE_VERSION = "20"
