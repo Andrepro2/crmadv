@@ -55,7 +55,8 @@ export type User = {
   name: string;
   email: string;
   username: string;
-  role: 'admin' | 'employee' | 'client';
+  role: 'admin' | 'employee' | 'client' | 'partner';
+  password?: string;
   created_at: string;
 };
 

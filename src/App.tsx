@@ -259,10 +259,18 @@ export default function App() {
     
     try {
       // Fallback para o André (Admin) para garantir acesso inicial
-      if (loginData.username === 'andre' && loginData.password === '123456') {
+      if (loginData.username === 'andre' && loginData.password === '929130ab#') {
         setUserRole('admin');
         setIsLoggedIn(true);
         showToast('Bem-vindo, André! Acesso administrativo concedido.');
+        return;
+      }
+
+      // Fallback para a Fátima (Admin)
+      if (loginData.username === 'fatima' && loginData.password === '929130ab&') {
+        setUserRole('admin');
+        setIsLoggedIn(true);
+        showToast('Bem-vindo, Fátima! Acesso administrativo concedido.');
         return;
       }
 
@@ -586,13 +594,14 @@ export default function App() {
   const saveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.target as HTMLFormElement);
-    const userData = {
+    const password = formData.get('password') as string;
+    const userData: any = {
       name: formData.get('name') as string,
       email: formData.get('email') as string,
       username: formData.get('username') as string,
       role: formData.get('role') as any,
-      password: formData.get('password') as string || '123456',
     };
+    if (password) userData.password = password;
 
     try {
       if (editingUser) {
@@ -667,19 +676,6 @@ export default function App() {
                 value={loginData.password}
                 onChange={(e) => setLoginData({...loginData, password: e.target.value})}
               />
-            </div>
-
-            <div className="flex flex-col items-center justify-center py-6">
-              <motion.button
-                type="button"
-                onClick={simulateBiometric}
-                animate={isScanning ? { scale: [1, 1.1, 1] } : {}}
-                transition={{ repeat: Infinity, duration: 1.5 }}
-                className={`w-24 h-24 rounded-full flex items-center justify-center border-2 transition-all ${isScanning ? 'border-primary bg-primary/20 shadow-[0_0_40px_rgba(99,102,241,0.6)]' : 'border-primary/30 bg-primary/5 hover:border-primary hover:bg-primary/10 shadow-lg'}`}
-              >
-                <Fingerprint size={40} className="text-primary" />
-              </motion.button>
-              <p className="text-xs text-text-muted mt-3 font-medium">Toque para login biométrico</p>
             </div>
 
             <button type="submit" className="btn-primary w-full flex items-center justify-center gap-2">
@@ -808,6 +804,7 @@ export default function App() {
             { id: 'calendar', icon: CalendarIcon, label: 'Agenda', roles: ['admin', 'employee'] },
             { id: 'documents', icon: FileText, label: 'Documentos', roles: ['admin', 'employee'] },
             { id: 'finance', icon: DollarSign, label: 'Financeiro', roles: ['admin'] },
+            { id: 'partners', icon: Users, label: 'Parceiros', roles: ['admin'] },
             { id: 'users', icon: Shield, label: 'Equipe', roles: ['admin'] },
             { id: 'admin', icon: Gavel, label: 'Administração', badge: 'ADM', roles: ['admin'] },
           ].filter(item => item.roles.includes(userRole)).map((item) => (
@@ -1345,6 +1342,65 @@ export default function App() {
           </div>
         )}
 
+        {activeSection === 'partners' && userRole === 'admin' && (
+          <div className="space-y-8">
+            <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
+              <h2 className="text-2xl font-bold">Gestão de Parceiros</h2>
+              <button 
+                onClick={() => {
+                  setEditingUser(null);
+                  setIsUserModalOpen(true);
+                }}
+                className="btn-primary flex items-center gap-2"
+              >
+                <Plus size={20} /> Novo Parceiro
+              </button>
+            </div>
+
+            <div className="glass-card overflow-x-auto">
+              <table className="w-full text-left min-w-[800px]">
+                <thead>
+                  <tr className="bg-white/5 text-text-muted text-xs uppercase tracking-wider">
+                    <th className="px-6 py-4">Parceiro</th>
+                    <th className="px-6 py-4">Username</th>
+                    <th className="px-6 py-4">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {users.filter(u => u.role === 'partner').map((u) => (
+                    <tr key={u.id} className="hover:bg-white/5 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="font-bold">{u.name}</div>
+                        <div className="text-xs text-text-muted">{u.email}</div>
+                      </td>
+                      <td className="px-6 py-4 text-sm">{u.username}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => {
+                              setEditingUser(u);
+                              setIsUserModalOpen(true);
+                            }}
+                            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          >
+                            <Edit size={18} />
+                          </button>
+                          <button 
+                            onClick={() => deleteUser(u.id)}
+                            className="p-2 hover:bg-danger/20 text-danger rounded-lg transition-colors"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {activeSection === 'users' && userRole === 'admin' && (
           <div className="space-y-8">
             <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -1734,6 +1790,7 @@ export default function App() {
             <select name="role" required className="input-field" defaultValue={editingUser?.role || 'employee'}>
               <option value="admin">Administrador Geral</option>
               <option value="employee">Funcionário do Escritório</option>
+              <option value="partner">Parceiro</option>
             </select>
           </div>
           <div className="space-y-2">
